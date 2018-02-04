@@ -1,0 +1,97 @@
+#!/usr/bin/env ruby
+
+require "optparse"
+require "securerandom"
+require_relative "./support"
+
+O = Struct.new(
+  :build_flag,
+  :container_name,
+  :home_host,
+  :image_name,
+  :root_path,
+  :verbose,
+  :workdir
+).new
+
+
+OptionParser.new do |opts|
+  opts.on("-v", "--[no-]verbose", "Enable verbose") do |v|
+    O.verbose = v
+  end
+
+  opts.on("-b", "--build", "Build the image") do
+    O.build_flag = true
+  end
+
+  opts.on("-nNAME", "--name=NAME", "Set container name") do |name|
+    O.container_name = name
+  end
+
+  opts.on("-iIMAGE", "--image=IMAGE", "Set container image") do |name|
+    O.image_name = name
+  end
+
+  opts.on("-H", "--home-host=PATH", "Path in host to store container home") do |path|
+    O.home_host = path
+  end
+
+  opts.on("-rPATH", "--root=PATH", "Set root path") do |path|
+    O.root_path = path
+  end
+end.parse!
+
+O.image_name ||= "run-scala"
+
+if O.build_flag
+  Dir.chdir(File.dirname($0))
+  cmd "docker", "build", "-t", O.image_name, "--build-arg", "uid=#{Process.uid}", "."
+  exit
+end
+
+if O.root_path.nil?
+  # Detect path for the .git directory.
+  path = Dir.pwd
+  workdir = ""
+  while path != "/"
+    if File.exists?("#{path}/.git")
+      STDERR.puts "\033[34mroot = #{path}, workdir = #{workdir}\033[m" if O.verbose
+
+      O.workdir ||= workdir
+      O.root_path = path
+      break
+    end
+    workdir = File.join(File.basename(path), workdir)
+    path = File.dirname(path)
+  end
+end
+
+
+# Run a regular container
+
+O.home_host = "/srv/scala/home"
+O.container_name ||= "scala-#{File.basename(O.root_path)}-#{SecureRandom.hex(3)}"
+
+run_args = %w(docker run -t -ti --rm)
+run_args << "--name" << O.container_name
+
+if not File.directory?(O.home_host)
+  cmd "sudo", "mkdir", "-p", O.home_host
+  cmd "sudo", "chown", [ Process.uid, Process.gid ].join(":"), O.home_host
+end
+
+run_args << "-v" << [ O.home_host, "/home/app" ].join(":")
+
+run_args << "-v" << [ O.root_path, "/code" ].join(":")
+
+run_args << "-u" << Process.uid.to_s
+
+run_args << "-w" << "/code/#{O.workdir}"
+
+run_args << "-e" << "CONTAINER_ROOT_NAME=#{File.basename(O.root_path)}"
+
+run_args << O.image_name
+
+run_args.concat(ARGV)
+
+cmd_replace(*run_args)
