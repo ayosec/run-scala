@@ -52,6 +52,7 @@ end
 if O.root_path.nil?
   # Detect path for the .git directory.
   path = Dir.pwd
+  O.root_path = path
   workdir = ""
   while path != "/"
     if File.exists?("#{path}/.git")
